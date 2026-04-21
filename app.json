@@ -1,17 +1,28 @@
 {
   "expo": {
-    "name": "sbb-crm-webview",
+    "name": "SBB CRM",
     "slug": "sbb-crm-webview",
     "version": "1.0.0",
     "orientation": "portrait",
+
     "icon": "./assets/images/icon.png",
+
     "scheme": "sbbcrmwebview",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "it.sbbeauty.crm",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Usiamo la posizione per il check-in clienti",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Usiamo la posizione per il check-in clienti"
+      }
     },
+
     "android": {
+      "package": "it.sbbeauty.crm",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -21,10 +32,12 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
+
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+
     "plugins": [
       "expo-router",
       [
@@ -40,6 +53,7 @@
         }
       ]
     ],
+
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
