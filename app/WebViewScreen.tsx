@@ -2,12 +2,14 @@ import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, View } from "react-native";
 import { WebView } from "react-native-webview";
+import { useWebViewStore } from "./store/webviewStore";
 
-export default function WebViewScreen({ url }) {
+export default function WebViewScreen() {
+  const url = useWebViewStore((s) => s.url);
   const [loading, setLoading] = useState(true);
-  const webviewRef = useRef(null);
+  const webviewRef = useRef<WebView>(null);
   // Cached GPS position
-  const lastPositionRef = useRef(null);
+  const lastPositionRef = useRef<Location.LocationObject | null>(null);
 
   // Pre-fetch GPS position on mount
   useEffect(() => {
