@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, View } from "react-native";
 import { WebView } from "react-native-webview";
 
-export default function Index() {
+export default function WebViewScreen({ url }) {
   const [loading, setLoading] = useState(true);
   const webviewRef = useRef(null);
   // Cached GPS position
@@ -30,6 +30,56 @@ export default function Index() {
   const INJECTED_JS = `
     (function() {
       console.log('🔥 INJECTED START');
+
+      // UI FIX BASE
+      document.body.style.paddingLeft = '0px';
+      document.body.style.paddingRight = '0px';
+      document.body.style.paddingBottom = '16px';
+      document.body.style.paddingTop = '40px';
+      document.body.style.boxSizing = 'border-box';
+      document.body.style.backgroundColor = '#ffffff';
+
+      // FORCE FULL WIDTH (override common Tailwind containers)
+      const containers = document.querySelectorAll('[class*="container"], .mx-auto, main');
+      containers.forEach(el => {
+        el.style.maxWidth = '100vw';
+        el.style.width = '100vw';
+        el.style.marginLeft = '0';
+        el.style.marginRight = '0';
+        el.style.paddingLeft = '0px';
+        el.style.paddingRight = '0px';
+      });
+
+      // HIDE ALL WEB NAV (bottom + tabs + navbar)
+      setTimeout(() => {
+        document.querySelectorAll(
+          'nav, footer, [class*="bottom"], [class*="footer"], [class*="tab"], [role="navigation"]'
+        ).forEach(el => {
+          el.style.display = 'none';
+        });
+
+        // ensure main content is visible full width
+        document.body.style.margin = '0';
+        document.body.style.paddingBottom = '16px';
+      }, 300);
+
+      // Improve card spacing
+      setTimeout(() => {
+        const cards = document.querySelectorAll('div');
+        cards.forEach(c => {
+          const text = c.innerText || '';
+          if (
+            text.includes('Check-in') ||
+            text.includes('€') ||
+            text.includes('Appuntamenti') ||
+            text.includes('Pipeline')
+          ) {
+            c.style.marginBottom = '16px';
+            c.style.borderRadius = '16px';
+            c.style.padding = '16px';
+          }
+        });
+      }, 500);
 
       // Log cookies and localStorage
       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'cookies', data: document.cookie }));
@@ -70,7 +120,7 @@ export default function Index() {
   `;
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: "#ffffff", paddingTop: 40 }}>
       {loading && (
         <View
           style={{
@@ -91,7 +141,7 @@ export default function Index() {
 
       <WebView
         ref={webviewRef}
-        source={{ uri: "https://crm.salesportal.it" }}
+        source={{ uri: `https://crm.salesportal.it${url}` }}
         // 🔐 LOGIN / COOKIE FIX
         javaScriptEnabled
         domStorageEnabled={true}
