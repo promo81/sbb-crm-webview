@@ -78,9 +78,24 @@ export async function registerForPushNotificationsAsync(): Promise<
     }
 
     return tokenResult?.data ?? null;
-  } catch {
+  } catch (error) {
     if (__DEV__) {
-      console.log("Failed to register for push notifications");
+      const err = error as { name?: string; message?: string; code?: unknown };
+      let permissionStatus: string | null = null;
+      try {
+        const { status } = await Notifications.getPermissionsAsync();
+        permissionStatus = status;
+      } catch {
+        permissionStatus = "unknown";
+      }
+      console.log("Failed to register for push notifications", {
+        name: err?.name ?? null,
+        message: err?.message ?? null,
+        code: err?.code ?? null,
+        projectId: resolveProjectId(),
+        isDevice: Device.isDevice,
+        permissionStatus,
+      });
     }
     return null;
   }
