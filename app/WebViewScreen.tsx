@@ -3,7 +3,19 @@ import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, View } from "react-native";
 import { WebView } from "react-native-webview";
-import { useWebViewStore } from "./store/webviewStore";
+import { useWebViewStore } from "../store/webviewStore";
+
+const BASE_URL = "https://app.salesportal.it";
+
+function buildWebUrl(path: string) {
+  const safePath = path || "/agent/dashboard";
+  const separator = safePath.includes("?") ? "&" : "?";
+  const finalUrl = `${BASE_URL}${safePath}${separator}native=1`;
+  if (__DEV__) {
+    console.log("BUILD URL", { path, finalUrl });
+  }
+  return finalUrl;
+}
 
 type TabName = "dashboard" | "clienti" | "mappa" | "agenda" | "checkin";
 
@@ -15,13 +27,17 @@ const PATH_TO_TAB: { prefix: string; tab: TabName }[] = [
   { prefix: "/agent/check-in", tab: "checkin" },
 ];
 
-function resolveTabFromPath(pathname: string): TabName {
+type NavType =
+  | { kind: "tab"; tab: TabName }
+  | { kind: "extra" };
+
+function resolveNavType(pathname: string): NavType {
   for (const entry of PATH_TO_TAB) {
     if (pathname === entry.prefix || pathname.startsWith(entry.prefix + "/")) {
-      return entry.tab;
+      return { kind: "tab", tab: entry.tab };
     }
   }
-  return "dashboard";
+  return { kind: "extra" };
 }
 
 function safeParsePathname(rawUrl: string): string | null {
@@ -39,6 +55,30 @@ export function navigateWebView(path: string): void {
   if (webviewNavigator) webviewNavigator(path);
 }
 
+const TAB_PATHS = new Set(PATH_TO_TAB.map((e) => e.prefix));
+
+let currentWebViewPath: string | null = null;
+
+export function getCurrentWebViewPath(): string | null {
+  return currentWebViewPath;
+}
+
+export function isOnExtraRoute(): boolean {
+  const p = currentWebViewPath;
+  if (!p) return false;
+  if (!p.startsWith("/agent/")) return false;
+  for (const tabPath of TAB_PATHS) {
+    if (p === tabPath || p.startsWith(tabPath + "/")) return false;
+  }
+  return true;
+}
+
+let programmaticTabChange = false;
+
+export function isProgrammaticTabChange(): boolean {
+  return programmaticTabChange;
+}
+
 export default function WebViewScreen() {
   const url = useWebViewStore((s) => s.url);
   const setUrl = useWebViewStore((s) => s.setUrl);
@@ -47,6 +87,35 @@ export default function WebViewScreen() {
   const lastPositionRef = useRef<Location.LocationObject | null>(null);
   const lastSyncedTabRef = useRef<TabName | null>(null);
   const lastPathRef = useRef<string | null>(null);
+  const loaderSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  // Loader visibile solo per navigazioni avviate dall'utente via tabPress
+  // nativo (o al primo mount). Gli eventi di navigazione interna SPA
+  // (link cliccati nella WebView, route extra) non mostrano l'overlay.
+  const loaderRequestedRef = useRef<boolean>(true);
+
+  const clearLoaderSafetyTimer = () => {
+    if (loaderSafetyTimerRef.current) {
+      clearTimeout(loaderSafetyTimerRef.current);
+      loaderSafetyTimerRef.current = null;
+    }
+  };
+
+  const armLoaderSafetyTimer = () => {
+    clearLoaderSafetyTimer();
+    loaderSafetyTimerRef.current = setTimeout(() => {
+      setLoading(false);
+      loaderRequestedRef.current = false;
+      loaderSafetyTimerRef.current = null;
+    }, 3000);
+  };
+
+  useEffect(() => {
+    return () => {
+      clearLoaderSafetyTimer();
+    };
+  }, []);
 
   useEffect(() => {
     webviewNavigator = (path: string) => {
@@ -54,10 +123,13 @@ export default function WebViewScreen() {
       if (currentPath === path) {
         return;
       }
+      // Navigazione richiesta esplicitamente dall'app (tabPress nativo) →
+      // ammettiamo l'overlay loading per il prossimo onLoadStart.
+      loaderRequestedRef.current = true;
       const storeUrl = useWebViewStore.getState().url;
       if (storeUrl === path) {
         const js = `window.location.assign(${JSON.stringify(
-          "https://crm.salesportal.it" + path,
+          buildWebUrl(path),
         )}); true;`;
         webviewRef.current?.injectJavaScript(js);
       } else {
@@ -93,10 +165,13 @@ export default function WebViewScreen() {
         if (document.getElementById(STYLE_ID)) return;
 
         var css = [
-          'html, body, main {',
+          'html, body, main, #__next, [data-nextjs-scroll-focus-boundary] {',
           '  width: 100% !important;',
           '  max-width: 100% !important;',
-          '  margin: 0 !important;',
+          '  margin-left: 0 !important;',
+          '  margin-right: 0 !important;',
+          '  padding-left: 0 !important;',
+          '  padding-right: 0 !important;',
           '  overflow-x: hidden !important;',
           '  box-sizing: border-box !important;',
           '}',
@@ -113,7 +188,9 @@ export default function WebViewScreen() {
           '[class*="max-w-xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
           '[class*="max-w-2xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
           '[class*="max-w-3xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
-          '[class*="max-w-4xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]) {',
+          '[class*="max-w-4xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-5xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-6xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]) {',
           '  width: 100% !important;',
           '  max-width: 100% !important;',
           '  margin-left: 0 !important;',
@@ -274,6 +351,143 @@ export default function WebViewScreen() {
             data: 'Injected JS ready: ' + location.pathname
           }));
         }
+
+        function safePost(payload) {
+          try {
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+            }
+          } catch (_) {}
+        }
+
+        function reportPageInfo(label) {
+          try {
+            var body = document.body;
+            var html = document.documentElement;
+            var rect = body ? body.getBoundingClientRect() : null;
+            safePost({
+              type: 'log',
+              data: {
+                tag: 'PAGE_INFO',
+                label: label,
+                href: location.href,
+                pathname: location.pathname,
+                title: document.title,
+                innerWidth: window.innerWidth,
+                innerHeight: window.innerHeight,
+                docClientWidth: html ? html.clientWidth : null,
+                bodyClientWidth: body ? body.clientWidth : null,
+                bodyScrollWidth: body ? body.scrollWidth : null,
+                bodyRect: rect ? {
+                  x: rect.x, y: rect.y,
+                  width: rect.width, height: rect.height,
+                  top: rect.top, left: rect.left,
+                  right: rect.right, bottom: rect.bottom
+                } : null
+              }
+            });
+          } catch (_) {}
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', function() { reportPageInfo('DOMContentLoaded'); });
+        } else {
+          reportPageInfo('initial');
+        }
+        setTimeout(function() { reportPageInfo('after_500ms'); }, 500);
+        setTimeout(function() { reportPageInfo('after_1500ms'); }, 1500);
+
+        var EXTRA_PATHS = ['/agent/compiti', '/agent/report', '/agent/trattative'];
+        function isExtraPath() {
+          for (var ei = 0; ei < EXTRA_PATHS.length; ei++) {
+            if (location.pathname === EXTRA_PATHS[ei] ||
+                location.pathname.indexOf(EXTRA_PATHS[ei] + '/') === 0) {
+              return true;
+            }
+          }
+          return false;
+        }
+        if (isExtraPath()) {
+          safePost({ type: 'log', data: { tag: 'EXTRA_ROUTE_WEB', pathname: location.pathname } });
+        }
+
+        if (!window.__rn_fetch_hooked__) {
+          window.__rn_fetch_hooked__ = true;
+          var origFetch = window.fetch;
+          if (typeof origFetch === 'function') {
+            window.fetch = function() {
+              var args = arguments;
+              var input = args[0];
+              var reqUrl = '';
+              try {
+                reqUrl = (typeof input === 'string') ? input : (input && input.url) || '';
+              } catch (_) { reqUrl = ''; }
+              var startedAt = Date.now();
+              return origFetch.apply(this, args).then(function(resp) {
+                try {
+                  safePost({
+                    type: 'log',
+                    data: {
+                      tag: 'FETCH',
+                      url: reqUrl,
+                      status: resp && resp.status,
+                      ok: resp && resp.ok,
+                      ms: Date.now() - startedAt
+                    }
+                  });
+                } catch (_) {}
+                return resp;
+              }, function(err) {
+                try {
+                  safePost({
+                    type: 'log',
+                    data: {
+                      tag: 'FETCH_ERROR',
+                      url: reqUrl,
+                      message: (err && err.message) ? String(err.message) : 'unknown',
+                      ms: Date.now() - startedAt
+                    }
+                  });
+                } catch (_) {}
+                throw err;
+              });
+            };
+          }
+
+          var OrigXHR = window.XMLHttpRequest;
+          if (typeof OrigXHR === 'function') {
+            var origOpen = OrigXHR.prototype.open;
+            var origSend = OrigXHR.prototype.send;
+            OrigXHR.prototype.open = function(method, url) {
+              try {
+                this.__rn_method = method;
+                this.__rn_url = url;
+              } catch (_) {}
+              return origOpen.apply(this, arguments);
+            };
+            OrigXHR.prototype.send = function() {
+              var self = this;
+              var startedAt = Date.now();
+              try {
+                self.addEventListener('loadend', function() {
+                  try {
+                    safePost({
+                      type: 'log',
+                      data: {
+                        tag: 'XHR',
+                        method: self.__rn_method,
+                        url: self.__rn_url,
+                        status: self.status,
+                        ms: Date.now() - startedAt
+                      }
+                    });
+                  } catch (_) {}
+                });
+              } catch (_) {}
+              return origSend.apply(this, arguments);
+            };
+          }
+        }
       } catch (e) {
         if (window.ReactNativeWebView) {
           window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -308,7 +522,7 @@ export default function WebViewScreen() {
 
       <WebView
         ref={webviewRef}
-        source={{ uri: `https://crm.salesportal.it${url}` }}
+        source={{ uri: buildWebUrl(url) }}
         javaScriptEnabled
         domStorageEnabled={true}
         sharedCookiesEnabled
@@ -332,19 +546,62 @@ export default function WebViewScreen() {
         } as object)}
         mixedContentMode="always"
         javaScriptCanOpenWindowsAutomatically={true}
-        onLoadStart={() => {
-          setLoading(true);
+        onLoadStart={(e) => {
+          if (loaderRequestedRef.current) {
+            setLoading(true);
+            armLoaderSafetyTimer();
+          }
+          if (__DEV__) {
+            console.log(
+              "LOAD START",
+              e?.nativeEvent?.url,
+              "showLoader",
+              loaderRequestedRef.current,
+            );
+          }
         }}
-        onLoadEnd={() => {
+        onLoadEnd={(e) => {
           setLoading(false);
+          loaderRequestedRef.current = false;
+          clearLoaderSafetyTimer();
+          if (__DEV__) {
+            console.log("LOAD END", e?.nativeEvent?.url);
+          }
         }}
-        onError={() => {
+        onError={(e) => {
           setLoading(false);
+          loaderRequestedRef.current = false;
+          clearLoaderSafetyTimer();
+          if (__DEV__) {
+            console.log("WEBVIEW ERROR", e.nativeEvent);
+          }
           Alert.alert("Errore", "Connessione fallita");
         }}
         onHttpError={(e) => {
           setLoading(false);
-          console.log("❌ HTTP", e.nativeEvent.statusCode);
+          loaderRequestedRef.current = false;
+          clearLoaderSafetyTimer();
+          if (__DEV__) {
+            console.log(
+              "HTTP ERROR",
+              e.nativeEvent.statusCode,
+              e.nativeEvent.url,
+            );
+          } else {
+            console.log("❌ HTTP", e.nativeEvent.statusCode);
+          }
+        }}
+        onShouldStartLoadWithRequest={(req) => {
+          if (__DEV__) {
+            console.log("REQ", {
+              url: req.url,
+              mainDocumentURL: (req as { mainDocumentURL?: string })
+                .mainDocumentURL,
+              navigationType: req.navigationType,
+              isTopFrame: (req as { isTopFrame?: boolean }).isTopFrame,
+            });
+          }
+          return true;
         }}
         onNavigationStateChange={(nav) => {
           const pathname = safeParsePathname(nav.url);
@@ -352,17 +609,64 @@ export default function WebViewScreen() {
           if (!pathname.startsWith("/agent/")) return;
           if (pathname === lastPathRef.current) return;
           lastPathRef.current = pathname;
+          currentWebViewPath = pathname;
 
-          const tab = resolveTabFromPath(pathname);
+          const navType = resolveNavType(pathname);
 
-          if (lastSyncedTabRef.current !== tab) {
-            lastSyncedTabRef.current = tab;
-            try {
-              router.replace(`/${tab}` as never);
-            } catch {
-              // ignore navigation errors
+          if (__DEV__) {
+            console.log("NAV STATE", {
+              url: nav.url,
+              pathname,
+              title: nav.title,
+              loading: nav.loading,
+              canGoBack: nav.canGoBack,
+              navType,
+            });
+            if (
+              pathname === "/agent/compiti" ||
+              pathname === "/agent/report" ||
+              pathname === "/agent/trattative"
+            ) {
+              console.log(
+                "EXTRA ROUTE DETECTED - should NOT redirect",
+                pathname,
+              );
             }
           }
+
+          if (navType.kind !== "tab") {
+            // Route extra: NON sincronizziamo la tab nativa per evitare
+            // che eventuali tabPress (utente o programmatici) sovrascrivano
+            // la WebView via setUrl. Niente setUrl, niente router.replace,
+            // niente forzature verso dashboard.
+            // Le navigazioni interne SPA verso route extra non devono
+            // mostrare l'overlay loader: se era attivo per inerzia, lo
+            // spegniamo qui.
+            loaderRequestedRef.current = false;
+            setLoading(false);
+            clearLoaderSafetyTimer();
+            return;
+          }
+
+          const tab = navType.tab;
+          if (lastSyncedTabRef.current === tab) return;
+          lastSyncedTabRef.current = tab;
+
+          if (__DEV__) {
+            console.log("SYNC TAB", tab);
+          }
+
+          programmaticTabChange = true;
+          try {
+            router.replace(`/${tab}` as never);
+          } catch {
+            // ignore navigation errors
+          }
+          // Sblocca il flag dopo che il tabPress sintetico (se emesso da
+          // react-navigation in conseguenza del replace) è già passato.
+          setTimeout(() => {
+            programmaticTabChange = false;
+          }, 50);
         }}
         injectedJavaScript={INJECTED_JS}
         onMessage={async (event) => {

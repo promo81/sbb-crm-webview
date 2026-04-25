@@ -1,7 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { View } from "react-native";
-import WebViewScreen, { navigateWebView } from "../WebViewScreen";
+import WebViewScreen, {
+  isProgrammaticTabChange,
+  navigateWebView,
+} from "../WebViewScreen";
 
 const TAB_BAR_HEIGHT = 70;
 
@@ -15,6 +18,15 @@ const TAB_TO_PATH: Record<string, string> = {
 
 export default function Layout() {
   const makeTabPressListener = (tabName: keyof typeof TAB_TO_PATH) => () => {
+    if (isProgrammaticTabChange()) {
+      if (__DEV__) {
+        console.log("TAB PRESS IGNORED (programmatic)", tabName);
+      }
+      return;
+    }
+    if (__DEV__) {
+      console.log("TAB PRESS", tabName);
+    }
     navigateWebView(TAB_TO_PATH[tabName]);
   };
 
