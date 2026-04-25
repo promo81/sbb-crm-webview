@@ -10,7 +10,7 @@ const BASE_URL = "https://app.salesportal.it";
 function buildWebUrl(path: string) {
   const safePath = path || "/agent/dashboard";
   const separator = safePath.includes("?") ? "&" : "?";
-  const finalUrl = `${BASE_URL}${safePath}${separator}native=1`;
+  const finalUrl = `${BASE_URL}${safePath}${separator}native=1&appv=mapfix1`;
   if (__DEV__) {
     console.log("BUILD URL", { path, finalUrl });
   }
@@ -207,36 +207,6 @@ export default function WebViewScreen() {
         styleEl.appendChild(document.createTextNode(css));
         (document.head || document.documentElement).appendChild(styleEl);
 
-        var MAP_STYLE_ID = '__rn_webview_map_style__';
-        function applyMapFix() {
-          if (!location.pathname || location.pathname.indexOf('/agent/mappa') === -1) {
-            var existing = document.getElementById(MAP_STYLE_ID);
-            if (existing) existing.parentNode.removeChild(existing);
-            return;
-          }
-          if (document.getElementById(MAP_STYLE_ID)) return;
-
-          var mapCss = [
-            'html, body, main {',
-            '  height: 100% !important;',
-            '  min-height: 100% !important;',
-            '}',
-            '[class*="map"], [class*="Map"], [class*="leaflet"], [class*="mapbox"], [class*="gm-style"] {',
-            '  display: block !important;',
-            '  visibility: visible !important;',
-            '  width: 100% !important;',
-            '  max-width: 100% !important;',
-            '  min-height: calc(100vh - 140px) !important;',
-            '}'
-          ].join('\\n');
-
-          var mapEl = document.createElement('style');
-          mapEl.id = MAP_STYLE_ID;
-          mapEl.appendChild(document.createTextNode(mapCss));
-          (document.head || document.documentElement).appendChild(mapEl);
-        }
-        applyMapFix();
-
         var BOTTOM_LABELS = ['Dashboard', 'Clienti', 'Mappa', 'Agenda', 'Check-in'];
         var SIDEBAR_CLASS_HINTS = ['sidebar', 'Sidebar', 'side-nav', 'SideNav', 'drawer', 'Drawer', 'side-menu', 'SideMenu'];
 
@@ -315,7 +285,6 @@ export default function WebViewScreen() {
         }
 
         function runDomFixes() {
-          applyMapFix();
           hideDuplicateBottomMenu();
         }
 
