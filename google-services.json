@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "116787416728",
+    "project_id": "sbbeautycrm",
+    "storage_bucket": "sbbeautycrm.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:116787416728:android:694e05d97975c0b63d8aed",
+        "android_client_info": {
+          "package_name": "it.sbbeauty.crm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCw7_6cZFUFFLXKtoxw_jwsuWhWO3tZEDo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -12,18 +12,15 @@
       "supportsTablet": true,
       "bundleIdentifier": "it.sbbeauty.crm",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Usiamo la posizione per il check-in clienti",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Usiamo la posizione per il check-in clienti"
+        "NSLocationWhenInUseUsageDescription": "Usiamo la posizione per il check-in clienti"
       }
     },
     "android": {
       "package": "it.sbbeauty.crm",
-      "permissions": [
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
-      ],
+      "googleServicesFile": "./google-services.json",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
