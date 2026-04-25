@@ -1,8 +1,14 @@
 import { router } from "expo-router";
 import * as Location from "expo-location";
+import * as Notifications from "expo-notifications";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Linking, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Platform, View } from "react-native";
 import { WebView } from "react-native-webview";
+import {
+  getNotificationUrl,
+  registerForPushNotificationsAsync,
+  setupAndroidNotificationChannel,
+} from "../lib/pushNotifications";
 import { useWebViewStore } from "../store/webviewStore";
 
 const BASE_URL = "https://app.salesportal.it";
@@ -87,6 +93,7 @@ export default function WebViewScreen() {
   const lastPositionRef = useRef<Location.LocationObject | null>(null);
   const lastSyncedTabRef = useRef<TabName | null>(null);
   const lastPathRef = useRef<string | null>(null);
+  const expoPushTokenRef = useRef<string | null>(null);
   const loaderSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -156,6 +163,69 @@ export default function WebViewScreen() {
         console.log("❌ Prefetch GPS failed");
       }
     })();
+  }, []);
+
+  // CRM web should listen to window expoPushToken event and save token
+  // with authenticated session. The native app does NOT persist the token
+  // to Supabase directly: it only forwards it to the WebView.
+  const injectPushTokenToWebView = (token: string) => {
+    const safeToken = JSON.stringify(token);
+    const safePlatform = JSON.stringify(Platform.OS);
+    const js = `
+      (function() {
+        try {
+          window.__EXPO_PUSH_TOKEN__ = ${safeToken};
+          window.dispatchEvent(new CustomEvent("expoPushToken", {
+            detail: { token: ${safeToken}, platform: ${safePlatform} }
+          }));
+        } catch (_) {}
+      })();
+      true;
+    `;
+    webviewRef.current?.injectJavaScript(js);
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    (async () => {
+      await setupAndroidNotificationChannel();
+      const token = await registerForPushNotificationsAsync();
+      if (!isMounted) return;
+      if (token) {
+        expoPushTokenRef.current = token;
+        // Try immediate injection; onLoadEnd will reinject anyway.
+        injectPushTokenToWebView(token);
+      }
+    })();
+
+    const responseSub = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        const targetUrl = getNotificationUrl(response);
+        if (targetUrl) {
+          useWebViewStore.getState().setUrl(targetUrl);
+        }
+      },
+    );
+
+    (async () => {
+      try {
+        const lastResponse =
+          await Notifications.getLastNotificationResponseAsync();
+        if (!isMounted) return;
+        const targetUrl = getNotificationUrl(lastResponse);
+        if (targetUrl) {
+          useWebViewStore.getState().setUrl(targetUrl);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+      responseSub.remove();
+    };
   }, []);
 
   const INJECTED_JS = `
@@ -591,6 +661,13 @@ export default function WebViewScreen() {
           clearLoaderSafetyTimer();
           if (__DEV__) {
             console.log("LOAD END", e?.nativeEvent?.url);
+          }
+          // Reinject push token after each load: SPA route changes / full
+          // page navigations may drop listeners registered by the previous
+          // page instance.
+          const tk = expoPushTokenRef.current;
+          if (tk) {
+            injectPushTokenToWebView(tk);
           }
         }}
         onError={(e) => {
