@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, View } from "react-native";
 import { WebView } from "react-native-webview";
 import { useWebViewStore } from "../store/webviewStore";
 
@@ -469,6 +469,62 @@ export default function WebViewScreen() {
     true;
   `;
 
+  const getIntentFallbackUrl = (url: string): string | null => {
+    try {
+      if (!url.startsWith("intent://")) return null;
+      const match = url.match(/S\.browser_fallback_url=([^;]+)/);
+      if (!match || !match[1]) return null;
+      return decodeURIComponent(match[1]);
+    } catch {
+      return null;
+    }
+  };
+
+  const openExternalUrl = async (url: string): Promise<void> => {
+    const fallbackUrl = url.startsWith("intent://")
+      ? getIntentFallbackUrl(url)
+      : null;
+    const targetUrl = fallbackUrl || url;
+    try {
+      const canOpen = await Linking.canOpenURL(targetUrl);
+      if (canOpen) {
+        await Linking.openURL(targetUrl);
+        return;
+      }
+      if (fallbackUrl) {
+        await Linking.openURL(fallbackUrl);
+        return;
+      }
+      Alert.alert("Impossibile aprire Google Maps");
+    } catch {
+      if (fallbackUrl) {
+        try {
+          await Linking.openURL(fallbackUrl);
+          return;
+        } catch {
+          if (__DEV__) {
+            console.log("EXTERNAL OPEN FAILED");
+          }
+        }
+      }
+      if (__DEV__) {
+        console.log("EXTERNAL OPEN FAILED");
+      }
+      Alert.alert("Impossibile aprire Google Maps");
+    }
+  };
+
+  const shouldOpenExternally = (url: string): boolean => {
+    if (!url) return false;
+    if (url.startsWith("intent://")) return true;
+    if (url.startsWith("comgooglemaps://")) return true;
+    if (url.startsWith("https://www.google.com/maps/dir")) return true;
+    if (url.startsWith("https://maps.google.com/maps/dir")) return true;
+    if (url.startsWith("https://www.google.com/maps")) return true;
+    if (url.startsWith("https://maps.google.com/maps")) return true;
+    return false;
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: "#ffffff", paddingTop: 40 }}>
       {loading && (
@@ -569,6 +625,10 @@ export default function WebViewScreen() {
               navigationType: req.navigationType,
               isTopFrame: (req as { isTopFrame?: boolean }).isTopFrame,
             });
+          }
+          if (shouldOpenExternally(req.url)) {
+            openExternalUrl(req.url);
+            return false;
           }
           return true;
         }}
