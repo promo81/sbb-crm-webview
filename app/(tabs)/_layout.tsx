@@ -1,11 +1,23 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { View } from "react-native";
-import WebViewScreen from "../WebViewScreen";
+import WebViewScreen, { navigateWebView } from "../WebViewScreen";
 
 const TAB_BAR_HEIGHT = 70;
 
+const TAB_TO_PATH: Record<string, string> = {
+  dashboard: "/agent/dashboard",
+  clienti: "/agent/clienti",
+  mappa: "/agent/mappa",
+  agenda: "/agent/agenda",
+  checkin: "/agent/check-in",
+};
+
 export default function Layout() {
+  const makeTabPressListener = (tabName: keyof typeof TAB_TO_PATH) => () => {
+    navigateWebView(TAB_TO_PATH[tabName]);
+  };
+
   return (
     <View style={{ flex: 1 }}>
       <Tabs
@@ -30,11 +42,31 @@ export default function Layout() {
           },
         })}
       >
-        <Tabs.Screen name="dashboard" options={{ title: "Home" }} />
-        <Tabs.Screen name="clienti" options={{ title: "Clienti" }} />
-        <Tabs.Screen name="mappa" options={{ title: "Mappa" }} />
-        <Tabs.Screen name="agenda" options={{ title: "Agenda" }} />
-        <Tabs.Screen name="checkin" options={{ title: "Check-in" }} />
+        <Tabs.Screen
+          name="dashboard"
+          options={{ title: "Home" }}
+          listeners={{ tabPress: makeTabPressListener("dashboard") }}
+        />
+        <Tabs.Screen
+          name="clienti"
+          options={{ title: "Clienti" }}
+          listeners={{ tabPress: makeTabPressListener("clienti") }}
+        />
+        <Tabs.Screen
+          name="mappa"
+          options={{ title: "Mappa" }}
+          listeners={{ tabPress: makeTabPressListener("mappa") }}
+        />
+        <Tabs.Screen
+          name="agenda"
+          options={{ title: "Agenda" }}
+          listeners={{ tabPress: makeTabPressListener("agenda") }}
+        />
+        <Tabs.Screen
+          name="checkin"
+          options={{ title: "Check-in" }}
+          listeners={{ tabPress: makeTabPressListener("checkin") }}
+        />
       </Tabs>
 
       {/* Persistent shared WebView — always mounted, sits above tab content,

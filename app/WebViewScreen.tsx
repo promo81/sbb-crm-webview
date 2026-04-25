@@ -1,17 +1,74 @@
+import { router } from "expo-router";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, View } from "react-native";
 import { WebView } from "react-native-webview";
 import { useWebViewStore } from "./store/webviewStore";
 
+type TabName = "dashboard" | "clienti" | "mappa" | "agenda" | "checkin";
+
+const PATH_TO_TAB: { prefix: string; tab: TabName }[] = [
+  { prefix: "/agent/dashboard", tab: "dashboard" },
+  { prefix: "/agent/clienti", tab: "clienti" },
+  { prefix: "/agent/mappa", tab: "mappa" },
+  { prefix: "/agent/agenda", tab: "agenda" },
+  { prefix: "/agent/check-in", tab: "checkin" },
+];
+
+function resolveTabFromPath(pathname: string): TabName {
+  for (const entry of PATH_TO_TAB) {
+    if (pathname === entry.prefix || pathname.startsWith(entry.prefix + "/")) {
+      return entry.tab;
+    }
+  }
+  return "dashboard";
+}
+
+function safeParsePathname(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).pathname;
+  } catch {
+    const match = rawUrl.match(/^https?:\/\/[^/]+(\/[^?#]*)/);
+    return match ? match[1] : null;
+  }
+}
+
+let webviewNavigator: ((path: string) => void) | null = null;
+
+export function navigateWebView(path: string): void {
+  if (webviewNavigator) webviewNavigator(path);
+}
+
 export default function WebViewScreen() {
   const url = useWebViewStore((s) => s.url);
+  const setUrl = useWebViewStore((s) => s.setUrl);
   const [loading, setLoading] = useState(true);
   const webviewRef = useRef<WebView>(null);
-  // Cached GPS position
   const lastPositionRef = useRef<Location.LocationObject | null>(null);
+  const lastSyncedTabRef = useRef<TabName | null>(null);
+  const lastPathRef = useRef<string | null>(null);
 
-  // Pre-fetch GPS position on mount
+  useEffect(() => {
+    webviewNavigator = (path: string) => {
+      const currentPath = lastPathRef.current;
+      if (currentPath === path) {
+        return;
+      }
+      const storeUrl = useWebViewStore.getState().url;
+      if (storeUrl === path) {
+        const js = `window.location.assign(${JSON.stringify(
+          "https://crm.salesportal.it" + path,
+        )}); true;`;
+        webviewRef.current?.injectJavaScript(js);
+      } else {
+        setUrl(path);
+      }
+    };
+    return () => {
+      webviewNavigator = null;
+    };
+  }, [setUrl]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -21,102 +78,210 @@ export default function WebViewScreen() {
             accuracy: Location.Accuracy.High,
           });
           lastPositionRef.current = pos;
-          console.log("⚡ Prefetched GPS", pos.coords);
+          console.log("⚡ Prefetched GPS");
         }
-      } catch (e) {
-        console.log("❌ Prefetch GPS failed", e);
+      } catch {
+        console.log("❌ Prefetch GPS failed");
       }
     })();
   }, []);
 
   const INJECTED_JS = `
     (function() {
-      console.log('🔥 INJECTED START');
+      try {
+        var STYLE_ID = '__rn_webview_fix_style__';
+        if (document.getElementById(STYLE_ID)) return;
 
-      // UI FIX BASE
-      document.body.style.paddingLeft = '0px';
-      document.body.style.paddingRight = '0px';
-      document.body.style.paddingBottom = '16px';
-      document.body.style.paddingTop = '40px';
-      document.body.style.boxSizing = 'border-box';
-      document.body.style.backgroundColor = '#ffffff';
+        var css = [
+          'html, body, main {',
+          '  width: 100% !important;',
+          '  max-width: 100% !important;',
+          '  margin: 0 !important;',
+          '  overflow-x: hidden !important;',
+          '  box-sizing: border-box !important;',
+          '}',
+          'body {',
+          '  padding-top: 40px !important;',
+          '  padding-bottom: 16px !important;',
+          '  background-color: #ffffff !important;',
+          '}',
+          '[class*="container"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="mx-auto"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-sm"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-md"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-lg"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-2xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-3xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]),',
+          '[class*="max-w-4xl"]:not([role="dialog"]):not([aria-modal="true"]):not([data-radix-popper-content-wrapper]) {',
+          '  width: 100% !important;',
+          '  max-width: 100% !important;',
+          '  margin-left: 0 !important;',
+          '  margin-right: 0 !important;',
+          '  box-sizing: border-box !important;',
+          '}',
+          '.bottom-nav, .mobile-nav, [class*="BottomNav"], [class*="MobileNav"] {',
+          '  display: none !important;',
+          '}'
+        ].join('\\n');
 
-      // FORCE FULL WIDTH (override common Tailwind containers)
-      const containers = document.querySelectorAll('[class*="container"], .mx-auto, main');
-      containers.forEach(el => {
-        el.style.maxWidth = '100vw';
-        el.style.width = '100vw';
-        el.style.marginLeft = '0';
-        el.style.marginRight = '0';
-        el.style.paddingLeft = '0px';
-        el.style.paddingRight = '0px';
-      });
+        var styleEl = document.createElement('style');
+        styleEl.id = STYLE_ID;
+        styleEl.appendChild(document.createTextNode(css));
+        (document.head || document.documentElement).appendChild(styleEl);
 
-      // HIDE ALL WEB NAV (bottom + tabs + navbar)
-      setTimeout(() => {
-        document.querySelectorAll(
-          'nav, footer, [class*="bottom"], [class*="footer"], [class*="tab"], [role="navigation"]'
-        ).forEach(el => {
-          el.style.display = 'none';
-        });
-
-        // ensure main content is visible full width
-        document.body.style.margin = '0';
-        document.body.style.paddingBottom = '16px';
-      }, 300);
-
-      // Improve card spacing
-      setTimeout(() => {
-        const cards = document.querySelectorAll('div');
-        cards.forEach(c => {
-          const text = c.innerText || '';
-          if (
-            text.includes('Check-in') ||
-            text.includes('€') ||
-            text.includes('Appuntamenti') ||
-            text.includes('Pipeline')
-          ) {
-            c.style.marginBottom = '16px';
-            c.style.borderRadius = '16px';
-            c.style.padding = '16px';
+        var MAP_STYLE_ID = '__rn_webview_map_style__';
+        function applyMapFix() {
+          if (!location.pathname || location.pathname.indexOf('/agent/mappa') === -1) {
+            var existing = document.getElementById(MAP_STYLE_ID);
+            if (existing) existing.parentNode.removeChild(existing);
+            return;
           }
-        });
-      }, 500);
+          if (document.getElementById(MAP_STYLE_ID)) return;
 
-      // Log cookies and localStorage
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'cookies', data: document.cookie }));
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'localStorage', data: JSON.stringify(localStorage) }));
+          var mapCss = [
+            'html, body, main {',
+            '  height: 100% !important;',
+            '  min-height: 100% !important;',
+            '}',
+            '[class*="map"], [class*="Map"], [class*="leaflet"], [class*="mapbox"], [class*="gm-style"] {',
+            '  display: block !important;',
+            '  visibility: visible !important;',
+            '  width: 100% !important;',
+            '  max-width: 100% !important;',
+            '  min-height: calc(100vh - 140px) !important;',
+            '}'
+          ].join('\\n');
 
-      // Forward console logs to React Native
-      const log = console.log;
-      console.log = function() {
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'log', data: Array.from(arguments) }));
-        log.apply(console, arguments);
-      };
+          var mapEl = document.createElement('style');
+          mapEl.id = MAP_STYLE_ID;
+          mapEl.appendChild(document.createTextNode(mapCss));
+          (document.head || document.documentElement).appendChild(mapEl);
+        }
+        applyMapFix();
 
-      // Hook fetch
-      const oldFetch = window.fetch;
-      window.fetch = function() {
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'fetch', url: arguments[0] }));
-        return oldFetch.apply(this, arguments);
-      };
+        var BOTTOM_LABELS = ['Dashboard', 'Clienti', 'Mappa', 'Agenda', 'Check-in'];
+        var SIDEBAR_CLASS_HINTS = ['sidebar', 'Sidebar', 'side-nav', 'SideNav', 'drawer', 'Drawer', 'side-menu', 'SideMenu'];
 
-      // Hook XHR
-      const oldOpen = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function(method, url) {
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'xhr', url }));
-        return oldOpen.apply(this, arguments);
-      };
+        function isInsideSidebarContext(el) {
+          var cur = el;
+          while (cur && cur !== document.body) {
+            if (cur.tagName === 'ASIDE') return true;
+            if (cur.getAttribute) {
+              var role = cur.getAttribute('role');
+              if (role === 'navigation' || role === 'complementary' || role === 'menu') return true;
+              if (cur.hasAttribute('data-sidebar')) return true;
+              if (cur.hasAttribute('data-drawer')) return true;
+            }
+            var cls = (cur.className && typeof cur.className === 'string') ? cur.className : '';
+            for (var k = 0; k < SIDEBAR_CLASS_HINTS.length; k++) {
+              if (cls.indexOf(SIDEBAR_CLASS_HINTS[k]) !== -1) return true;
+            }
+            cur = cur.parentElement;
+          }
+          return false;
+        }
 
-      // GPS debug
-      window.__gpsSuccess = null;
-      window.__gpsError = null;
+        function containsSidebar(el) {
+          if (!el || !el.querySelector) return false;
+          if (el.querySelector('aside')) return true;
+          if (el.querySelector('[role="navigation"]')) return true;
+          if (el.querySelector('[data-sidebar]')) return true;
+          return false;
+        }
 
-      navigator.geolocation.getCurrentPosition = function(success, error) {
-        window.__gpsSuccess = success;
-        window.__gpsError = error;
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'request_gps' }));
-      };
+        function hideDuplicateBottomMenu() {
+          var all = document.body ? document.body.querySelectorAll('*') : [];
+          var vw = window.innerWidth;
+          var vh = window.innerHeight;
+          for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            if (el.tagName === 'NAV') continue;
+            if (el.tagName === 'ASIDE') continue;
+            if (el.getAttribute) {
+              var role = el.getAttribute('role');
+              if (role === 'navigation' || role === 'complementary' || role === 'menu') continue;
+              if (el.hasAttribute('data-sidebar')) continue;
+              if (el.hasAttribute('data-drawer')) continue;
+            }
+            var cls = (el.className && typeof el.className === 'string') ? el.className : '';
+            var isSidebarLike = false;
+            for (var s = 0; s < SIDEBAR_CLASS_HINTS.length; s++) {
+              if (cls.indexOf(SIDEBAR_CLASS_HINTS[s]) !== -1) { isSidebarLike = true; break; }
+            }
+            if (isSidebarLike) continue;
+
+            if (isInsideSidebarContext(el)) continue;
+            if (containsSidebar(el)) continue;
+
+            var cs = window.getComputedStyle(el);
+            var pos = cs.position;
+            if (pos !== 'fixed' && pos !== 'sticky') continue;
+
+            var rect = el.getBoundingClientRect();
+            if (rect.bottom < vh - 80) continue;
+            if (rect.top < vh * 0.55) continue;
+            if (rect.height === 0 || rect.width === 0) continue;
+            if (rect.height > 140) continue;
+            if (rect.width < vw * 0.6) continue;
+
+            var txt = (el.innerText || '').trim();
+            if (!txt) continue;
+            var hits = 0;
+            for (var j = 0; j < BOTTOM_LABELS.length; j++) {
+              if (txt.indexOf(BOTTOM_LABELS[j]) !== -1) hits++;
+            }
+            if (hits >= 3) {
+              el.style.setProperty('display', 'none', 'important');
+            }
+          }
+        }
+
+        function runDomFixes() {
+          applyMapFix();
+          hideDuplicateBottomMenu();
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', runDomFixes);
+        } else {
+          runDomFixes();
+        }
+        setTimeout(runDomFixes, 400);
+        setTimeout(runDomFixes, 1200);
+
+        var lastPath = location.pathname;
+        setInterval(function() {
+          if (location.pathname !== lastPath) {
+            lastPath = location.pathname;
+            runDomFixes();
+          }
+        }, 600);
+
+        window.__gpsSuccess = null;
+        window.__gpsError = null;
+        navigator.geolocation.getCurrentPosition = function(success, error) {
+          window.__gpsSuccess = success;
+          window.__gpsError = error;
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'request_gps' }));
+          }
+        };
+
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'log',
+            data: 'Injected JS ready: ' + location.pathname
+          }));
+        }
+      } catch (e) {
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'log',
+            data: 'Injected JS error'
+          }));
+        }
+      }
     })();
     true;
   `;
@@ -144,7 +309,6 @@ export default function WebViewScreen() {
       <WebView
         ref={webviewRef}
         source={{ uri: `https://crm.salesportal.it${url}` }}
-        // 🔐 LOGIN / COOKIE FIX
         javaScriptEnabled
         domStorageEnabled={true}
         sharedCookiesEnabled
@@ -155,80 +319,100 @@ export default function WebViewScreen() {
         incognito={false}
         originWhitelist={["*"]}
         setSupportMultipleWindows={false}
-        // 🔥 USER AGENT → evita logout
         userAgent="Mozilla/5.0 (Linux; Android 13; Pixel 9) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
-        // 📍 GPS
         geolocationEnabled={true}
-        onGeolocationPermissionsShowPrompt={(origin, callback) => {
-          console.log("📍 GPS PERMISSION REQUEST:", origin);
-          callback(true);
-        }}
-        // Additional props for debugging cookies/session
+        {...({
+          onGeolocationPermissionsShowPrompt: (
+            _origin: string,
+            callback: (allow: boolean) => void,
+          ) => {
+            console.log("📍 GPS permission request");
+            callback(true);
+          },
+        } as object)}
         mixedContentMode="always"
         javaScriptCanOpenWindowsAutomatically={true}
-        // Error handling
-        onError={() => Alert.alert("Errore", "Connessione fallita")}
-        onHttpError={(e) => {
-          console.log("❌ HTTP ERROR:", e.nativeEvent);
-          Alert.alert(
-            "Errore HTTP",
-            `${e.nativeEvent.statusCode} - ${e.nativeEvent.url}`,
-          );
+        onLoadStart={() => {
+          setLoading(true);
         }}
-        // Debug utile
-        onLoad={() => console.log("✅ WebView loaded")}
         onLoadEnd={() => {
-          console.log("📄 Load End");
           setLoading(false);
         }}
-        onNavigationStateChange={(nav) => console.log("URL:", nav.url)}
-        onShouldStartLoadWithRequest={(req) => {
-          console.log("REQ:", req.url);
-          return true;
+        onError={() => {
+          setLoading(false);
+          Alert.alert("Errore", "Connessione fallita");
+        }}
+        onHttpError={(e) => {
+          setLoading(false);
+          console.log("❌ HTTP", e.nativeEvent.statusCode);
+        }}
+        onNavigationStateChange={(nav) => {
+          const pathname = safeParsePathname(nav.url);
+          if (!pathname) return;
+          if (!pathname.startsWith("/agent/")) return;
+          if (pathname === lastPathRef.current) return;
+          lastPathRef.current = pathname;
+
+          const tab = resolveTabFromPath(pathname);
+
+          if (lastSyncedTabRef.current !== tab) {
+            lastSyncedTabRef.current = tab;
+            try {
+              router.replace(`/${tab}` as never);
+            } catch {
+              // ignore navigation errors
+            }
+          }
         }}
         injectedJavaScript={INJECTED_JS}
         onMessage={async (event) => {
+          let msg: { type?: string; data?: unknown } | null = null;
           try {
-            const msg = JSON.parse(event.nativeEvent.data);
+            msg = JSON.parse(event.nativeEvent.data);
+          } catch {
+            return;
+          }
+          if (!msg || typeof msg !== "object") return;
 
-            console.log("📲 WEBVIEW:", msg);
+          if (msg.type === "log") {
+            console.log("📲", msg.data);
+            return;
+          }
 
-            if (msg.type === "request_gps") {
-              try {
-                const { status } =
-                  await Location.requestForegroundPermissionsAsync();
-                if (status !== "granted") {
-                  console.log("❌ GPS permission denied");
-                  return;
-                }
-
-                let pos = lastPositionRef.current;
-                if (!pos) {
-                  pos = await Location.getCurrentPositionAsync({
-                    accuracy: Location.Accuracy.Balanced,
-                  });
-                  lastPositionRef.current = pos;
-                }
-
-                const js = `
-                  if (window.__gpsSuccess) {
-                    window.__gpsSuccess({
-                      coords: {
-                        latitude: ${pos.coords.latitude},
-                        longitude: ${pos.coords.longitude},
-                        accuracy: ${pos.coords.accuracy}
-                      }
-                    });
-                  }
-                `;
-
-                webviewRef?.current?.injectJavaScript(js);
-              } catch (err) {
-                console.log("❌ GPS ERROR", err);
+          if (msg.type === "request_gps") {
+            try {
+              const { status } =
+                await Location.requestForegroundPermissionsAsync();
+              if (status !== "granted") {
+                console.log("❌ GPS permission denied");
+                return;
               }
+
+              let pos = lastPositionRef.current;
+              if (!pos) {
+                pos = await Location.getCurrentPositionAsync({
+                  accuracy: Location.Accuracy.Balanced,
+                });
+                lastPositionRef.current = pos;
+              }
+
+              const js = `
+                if (window.__gpsSuccess) {
+                  window.__gpsSuccess({
+                    coords: {
+                      latitude: ${pos.coords.latitude},
+                      longitude: ${pos.coords.longitude},
+                      accuracy: ${pos.coords.accuracy}
+                    }
+                  });
+                }
+                true;
+              `;
+
+              webviewRef?.current?.injectJavaScript(js);
+            } catch {
+              console.log("❌ GPS error");
             }
-          } catch (e) {
-            console.log("📲 RAW:", event.nativeEvent.data);
           }
         }}
       />
