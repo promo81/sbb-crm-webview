@@ -9,28 +9,6 @@
       "client_info": {
         "mobilesdk_app_id": "1:116787416728:android:694e05d97975c0b63d8aed",
         "android_client_info": {
-          "package_name": "it.sbbeauty.crm"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyCw7_6cZFUFFLXKtoxw_jwsuWhWO3tZEDo"
-        },
-        {
-          "current_key": "AIzaSyD9SETKq50fv1djzFPOVD4qJtHsm-EBnqA"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:116787416728:android:1eb233e04719667a3d8aed",
-        "android_client_info": {
           "package_name": "it.sbbeauty.crm.mobile"
         }
       },
