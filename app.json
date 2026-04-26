@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "SBB CRM App",
-    "slug": "sbb-crm-app",
+    "slug": "sbb-crm-webview",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
