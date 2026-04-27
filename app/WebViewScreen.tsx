@@ -391,6 +391,84 @@ export default function WebViewScreen() {
           }));
         }
 
+        // ===== EXTERNAL URL INTERCEPTOR =====
+        // Necessario perché:
+        //  - setSupportMultipleWindows={false} fa sì che window.open() non
+        //    sempre triggeri onShouldStartLoadWithRequest.
+        //  - I link target="_blank" possono aprirsi nella stessa WebView.
+        //  - Vogliamo che Google Maps / geo:/intent:// vadano fuori app.
+        function isExternalMapUrl(u) {
+          if (!u || typeof u !== 'string') return false;
+          if (u.indexOf('intent://') === 0) return true;
+          if (u.indexOf('comgooglemaps://') === 0) return true;
+          if (u.indexOf('geo:') === 0) return true;
+          if (u.indexOf('google.navigation:') === 0) return true;
+          if (u.indexOf('maps:') === 0) return true;
+          if (u.indexOf('tel:') === 0) return true;
+          if (u.indexOf('mailto:') === 0) return true;
+          if (u.indexOf('sms:') === 0) return true;
+          if (u.indexOf('whatsapp:') === 0) return true;
+          if (/^https?:\\/\\/(www\\.)?google\\.[a-z.]+\\/maps/i.test(u)) return true;
+          if (/^https?:\\/\\/maps\\.google\\.[a-z.]+/i.test(u)) return true;
+          if (/^https?:\\/\\/maps\\.app\\.goo\\.gl\\//i.test(u)) return true;
+          if (/^https?:\\/\\/goo\\.gl\\/maps/i.test(u)) return true;
+          return false;
+        }
+
+        function postOpenExternal(u) {
+          try {
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'open_external_url',
+                url: u
+              }));
+            }
+          } catch (_) {}
+        }
+
+        // 1) Sovrascrivi window.open: se URL esterno → manda a RN, blocca apertura.
+        if (!window.__rn_window_open_hooked__) {
+          window.__rn_window_open_hooked__ = true;
+          var origOpen = window.open;
+          window.open = function(u, target, features) {
+            try {
+              if (isExternalMapUrl(u)) {
+                postOpenExternal(u);
+                return null;
+              }
+            } catch (_) {}
+            try {
+              return origOpen ? origOpen.apply(window, arguments) : null;
+            } catch (_) {
+              // Alcune WebView lanciano se origOpen è null
+              return null;
+            }
+          };
+        }
+
+        // 2) Intercetta click su anchor verso URL esterni.
+        if (!window.__rn_anchor_click_hooked__) {
+          window.__rn_anchor_click_hooked__ = true;
+          document.addEventListener('click', function(ev) {
+            try {
+              var el = ev.target;
+              while (el && el !== document.body) {
+                if (el.tagName === 'A') break;
+                el = el.parentElement;
+              }
+              if (!el || el.tagName !== 'A') return;
+              var href = el.getAttribute('href') || '';
+              if (!href) return;
+              if (isExternalMapUrl(href)) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                postOpenExternal(href);
+              }
+            } catch (_) {}
+          }, true);
+        }
+        // ===== /EXTERNAL URL INTERCEPTOR =====
+
         function safePost(payload) {
           try {
             if (window.ReactNativeWebView) {
@@ -550,48 +628,163 @@ export default function WebViewScreen() {
     }
   };
 
-  const openExternalUrl = async (url: string): Promise<void> => {
-    const fallbackUrl = url.startsWith("intent://")
-      ? getIntentFallbackUrl(url)
-      : null;
-    const targetUrl = fallbackUrl || url;
+  // Trasforma un intent:// Android in una URL apribile direttamente.
+  // Se non riusciamo a estrarre nulla di utile, ritorniamo null.
+  const normalizeIntentUrl = (url: string): string | null => {
+    if (!url.startsWith("intent://")) return null;
+    const fallback = getIntentFallbackUrl(url);
+    if (fallback) return fallback;
+    // intent://maps/...#Intent;...;end → prova a riscriverlo come https://maps...
     try {
-      const canOpen = await Linking.canOpenURL(targetUrl);
-      if (canOpen) {
-        await Linking.openURL(targetUrl);
-        return;
+      const stripped = url.replace(/^intent:\/\//, "");
+      const beforeHash = stripped.split("#")[0];
+      if (beforeHash.startsWith("maps") || beforeHash.includes("google.com/maps")) {
+        return `https://www.google.com/${beforeHash}`;
       }
-      if (fallbackUrl) {
-        await Linking.openURL(fallbackUrl);
-        return;
-      }
-      Alert.alert("Impossibile aprire Google Maps");
     } catch {
-      if (fallbackUrl) {
+      // ignore
+    }
+    return null;
+  };
+
+  // Apre URL esterni. Per https NON usiamo canOpenURL (su Android 11+ può
+  // dare false positive di "non apribile" senza <queries> nel manifest):
+  // proviamo direttamente openURL e gestiamo l'errore.
+  const openExternalUrl = async (rawUrl: string): Promise<void> => {
+    if (__DEV__) {
+      console.log("OPEN EXTERNAL", rawUrl);
+    }
+
+    // 1) intent:// → prova prima a riscrivere a https/scheme nativo
+    if (rawUrl.startsWith("intent://")) {
+      const normalized = normalizeIntentUrl(rawUrl);
+      if (normalized) {
         try {
-          await Linking.openURL(fallbackUrl);
+          await Linking.openURL(normalized);
           return;
         } catch {
-          if (__DEV__) {
-            console.log("EXTERNAL OPEN FAILED");
-          }
+          // continuiamo coi fallback
         }
       }
-      if (__DEV__) {
-        console.log("EXTERNAL OPEN FAILED");
+      // Su Android possiamo provare ad aprire l'intent:// raw (alcune
+      // versioni di Android lo gestiscono, altre no).
+      if (Platform.OS === "android") {
+        try {
+          await Linking.openURL(rawUrl);
+          return;
+        } catch {
+          // fallthrough
+        }
       }
-      Alert.alert("Impossibile aprire Google Maps");
     }
+
+    // 2) comgooglemaps:// → se non installato, fallback https
+    if (rawUrl.startsWith("comgooglemaps://")) {
+      try {
+        await Linking.openURL(rawUrl);
+        return;
+      } catch {
+        const fallback = rawUrl.replace(
+          "comgooglemaps://",
+          "https://www.google.com/maps/",
+        );
+        try {
+          await Linking.openURL(fallback);
+          return;
+        } catch {
+          Alert.alert("Impossibile aprire Google Maps");
+          return;
+        }
+      }
+    }
+
+    // 3) geo: / google.navigation: → openURL diretto con fallback https
+    if (
+      rawUrl.startsWith("geo:") ||
+      rawUrl.startsWith("google.navigation:") ||
+      rawUrl.startsWith("maps:")
+    ) {
+      try {
+        await Linking.openURL(rawUrl);
+        return;
+      } catch {
+        const httpsFallback = buildHttpsFallback(rawUrl);
+        if (httpsFallback) {
+          try {
+            await Linking.openURL(httpsFallback);
+            return;
+          } catch {
+            // ignore
+          }
+        }
+        Alert.alert("Impossibile aprire Google Maps");
+        return;
+      }
+    }
+
+    // 4) https://(www.)?google.com/maps... e maps.google.com / maps.app.goo.gl
+    // Su Android il sistema mostra il chooser (Google Maps / Browser). Su iOS
+    // apre Maps se installato, altrimenti Safari. openURL https dovrebbe
+    // sempre funzionare → niente canOpenURL gate.
+    try {
+      await Linking.openURL(rawUrl);
+      return;
+    } catch (err) {
+      if (__DEV__) {
+        console.log("OPEN EXTERNAL FAILED", err);
+      }
+      Alert.alert(
+        "Impossibile aprire Google Maps",
+        "Verifica di avere installato Google Maps o un browser.",
+      );
+    }
+  };
+
+  // Da geo:/google.navigation: produce un URL https equivalente come fallback.
+  const buildHttpsFallback = (url: string): string | null => {
+    try {
+      // geo:LAT,LNG?q=LAT,LNG(label) | geo:0,0?q=LAT,LNG | geo:0,0?q=address
+      if (url.startsWith("geo:")) {
+        const after = url.slice(4);
+        const [coords, query] = after.split("?");
+        const qMatch = query?.match(/q=([^&]+)/);
+        if (qMatch && qMatch[1]) {
+          return `https://www.google.com/maps/search/?api=1&query=${qMatch[1]}`;
+        }
+        if (coords && coords !== "0,0") {
+          return `https://www.google.com/maps?q=${coords}`;
+        }
+      }
+      // google.navigation:q=LAT,LNG
+      if (url.startsWith("google.navigation:")) {
+        const qMatch = url.match(/q=([^&]+)/);
+        if (qMatch && qMatch[1]) {
+          return `https://www.google.com/maps/dir/?api=1&destination=${qMatch[1]}`;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   };
 
   const shouldOpenExternally = (url: string): boolean => {
     if (!url) return false;
+    // Schemi non-http → sempre esterni
     if (url.startsWith("intent://")) return true;
     if (url.startsWith("comgooglemaps://")) return true;
-    if (url.startsWith("https://www.google.com/maps/dir")) return true;
-    if (url.startsWith("https://maps.google.com/maps/dir")) return true;
-    if (url.startsWith("https://www.google.com/maps")) return true;
-    if (url.startsWith("https://maps.google.com/maps")) return true;
+    if (url.startsWith("geo:")) return true;
+    if (url.startsWith("google.navigation:")) return true;
+    if (url.startsWith("maps:")) return true;
+    if (url.startsWith("tel:")) return true;
+    if (url.startsWith("mailto:")) return true;
+    if (url.startsWith("sms:")) return true;
+    if (url.startsWith("whatsapp:")) return true;
+    // HTTPS Maps (ogni variante)
+    if (/^https?:\/\/(www\.)?google\.[a-z.]+\/maps/i.test(url)) return true;
+    if (/^https?:\/\/maps\.google\.[a-z.]+/i.test(url)) return true;
+    if (/^https?:\/\/maps\.app\.goo\.gl\//i.test(url)) return true;
+    if (/^https?:\/\/goo\.gl\/maps/i.test(url)) return true;
     return false;
   };
 
@@ -627,7 +820,28 @@ export default function WebViewScreen() {
         androidLayerType="hardware"
         incognito={false}
         originWhitelist={["*"]}
-        setSupportMultipleWindows={false}
+        setSupportMultipleWindows={true}
+        onOpenWindow={(syntheticEvent) => {
+          try {
+            const targetUrl = syntheticEvent?.nativeEvent?.targetUrl;
+            if (__DEV__) {
+              console.log("OPEN WINDOW", targetUrl);
+            }
+            if (targetUrl) {
+              if (shouldOpenExternally(targetUrl)) {
+                openExternalUrl(targetUrl);
+              } else {
+                webviewRef.current?.injectJavaScript(
+                  `window.location.assign(${JSON.stringify(targetUrl)}); true;`,
+                );
+              }
+            }
+          } catch (e) {
+            if (__DEV__) {
+              console.log("OPEN WINDOW ERROR", e);
+            }
+          }
+        }}
         userAgent="Mozilla/5.0 (Linux; Android 13; Pixel 9) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
         geolocationEnabled={true}
         {...({
@@ -694,17 +908,29 @@ export default function WebViewScreen() {
           }
         }}
         onShouldStartLoadWithRequest={(req) => {
+          const reqUrl = req.url || "";
           if (__DEV__) {
             console.log("REQ", {
-              url: req.url,
+              url: reqUrl,
               mainDocumentURL: (req as { mainDocumentURL?: string })
                 .mainDocumentURL,
               navigationType: req.navigationType,
               isTopFrame: (req as { isTopFrame?: boolean }).isTopFrame,
             });
           }
-          if (shouldOpenExternally(req.url)) {
-            openExternalUrl(req.url);
+
+          // Sub-frame (iframe Leaflet/tile/embed): non intercettare.
+          const isTopFrame =
+            (req as { isTopFrame?: boolean }).isTopFrame !== false;
+          if (!isTopFrame) {
+            return true;
+          }
+
+          if (shouldOpenExternally(reqUrl)) {
+            if (__DEV__) {
+              console.log("EXTERNAL → openURL", reqUrl);
+            }
+            openExternalUrl(reqUrl);
             return false;
           }
           return true;
@@ -786,6 +1012,17 @@ export default function WebViewScreen() {
 
           if (msg.type === "log") {
             console.log("📲", msg.data);
+            return;
+          }
+
+          if (msg.type === "open_external_url") {
+            const externalUrl =
+              typeof (msg as { url?: unknown }).url === "string"
+                ? ((msg as { url: string }).url)
+                : "";
+            if (externalUrl) {
+              await openExternalUrl(externalUrl);
+            }
             return;
           }
 

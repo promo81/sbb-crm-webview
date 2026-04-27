@@ -48,7 +48,8 @@
           "color": "#ffffff",
           "defaultChannel": "default"
         }
-      ]
+      ],
+      "./plugins/withAndroidQueries.js"
     ],
     "experiments": {
       "typedRoutes": true,
