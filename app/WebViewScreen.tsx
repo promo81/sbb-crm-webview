@@ -817,7 +817,11 @@ export default function WebViewScreen() {
         thirdPartyCookiesEnabled
         cacheEnabled={true}
         cacheMode="LOAD_CACHE_ELSE_NETWORK"
-        androidLayerType="hardware"
+        androidLayerType={Platform.OS === "android" ? "software" : "none"}
+        onRenderProcessGone={(event) => {
+          console.warn("[WebView] render process gone", event.nativeEvent)
+          webviewRef.current?.reload?.()
+        }}
         incognito={false}
         originWhitelist={["*"]}
         setSupportMultipleWindows={true}
