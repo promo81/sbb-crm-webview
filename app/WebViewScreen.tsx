@@ -1,11 +1,15 @@
 import { router } from "expo-router";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Linking, Platform, View } from "react-native";
 import { WebView } from "react-native-webview";
 import {
+  buildNotificationOpenPayload,
+  buildPushRegistrationPayload,
   getNotificationUrl,
+  getNotificationResponseId,
+  isRecentNotificationResponse,
   registerForPushNotificationsAsync,
   setupAndroidNotificationChannel,
 } from "../lib/pushNotifications";
@@ -94,6 +98,11 @@ export default function WebViewScreen() {
   const lastSyncedTabRef = useRef<TabName | null>(null);
   const lastPathRef = useRef<string | null>(null);
   const expoPushTokenRef = useRef<string | null>(null);
+  const handledNotificationIdsRef = useRef<Set<string>>(new Set());
+  const pendingNotificationOpenRef = useRef<Notifications.NotificationResponse | null>(
+    null,
+  );
+  const locationPermissionAskedRef = useRef(false);
   const loaderSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -168,22 +177,88 @@ export default function WebViewScreen() {
   // CRM web should listen to window expoPushToken event and save token
   // with authenticated session. The native app does NOT persist the token
   // to Supabase directly: it only forwards it to the WebView.
-  const injectPushTokenToWebView = (token: string) => {
-    const safeToken = JSON.stringify(token);
-    const safePlatform = JSON.stringify(Platform.OS);
+  const injectPushTokenToWebView = useCallback((token: string) => {
+    const payload = buildPushRegistrationPayload(token);
+    const safePayload = JSON.stringify(payload);
     const js = `
       (function() {
         try {
-          window.__EXPO_PUSH_TOKEN__ = ${safeToken};
+          var payload = ${safePayload};
+          var key = JSON.stringify({
+            token: payload.expo_push_token,
+            platform: payload.platform,
+            device_name: payload.device_name,
+            device_model: payload.device_model,
+            os_name: payload.os_name,
+            os_version: payload.os_version,
+            app_version: payload.app_version,
+            build_number: payload.build_number,
+            runtime_version: payload.runtime_version
+          });
+          if (window.__EXPO_PUSH_REGISTRATION_KEY__ === key) return;
+          window.__EXPO_PUSH_REGISTRATION_KEY__ = key;
+          window.__EXPO_PUSH_TOKEN__ = payload.expo_push_token;
+          window.__EXPO_PUSH_REGISTRATION__ = payload;
+          var legacyDetail = Object.assign({
+            token: payload.expo_push_token,
+            platform: payload.platform
+          }, payload);
           window.dispatchEvent(new CustomEvent("expoPushToken", {
-            detail: { token: ${safeToken}, platform: ${safePlatform} }
+            detail: legacyDetail
+          }));
+          window.dispatchEvent(new CustomEvent("expoPushRegistration", {
+            detail: payload
           }));
         } catch (_) {}
       })();
       true;
     `;
     webviewRef.current?.injectJavaScript(js);
-  };
+  }, []);
+
+  const injectNotificationOpenToWebView = useCallback((
+    response: Notifications.NotificationResponse,
+  ) => {
+    const payload = buildNotificationOpenPayload(response);
+    const safePayload = JSON.stringify(payload);
+    const js = `
+      (function() {
+        try {
+          var payload = ${safePayload};
+          window.__EXPO_LAST_NOTIFICATION_OPEN__ = payload;
+          window.dispatchEvent(new CustomEvent("expoNotificationOpen", {
+            detail: payload
+          }));
+        } catch (_) {}
+      })();
+      true;
+    `;
+    webviewRef.current?.injectJavaScript(js);
+  }, []);
+
+  const handleNotificationResponse = useCallback((
+    response: Notifications.NotificationResponse | null | undefined,
+    options: { allowStale: boolean },
+  ) => {
+    if (!response) return;
+    if (!options.allowStale && !isRecentNotificationResponse(response)) {
+      return;
+    }
+
+    const notificationId = getNotificationResponseId(response);
+    const dedupeKey =
+      notificationId ??
+      `${response.actionIdentifier}:${response.notification.date}`;
+    if (handledNotificationIdsRef.current.has(dedupeKey)) return;
+    handledNotificationIdsRef.current.add(dedupeKey);
+
+    pendingNotificationOpenRef.current = response;
+    const targetUrl = getNotificationUrl(response);
+    if (targetUrl) {
+      useWebViewStore.getState().setUrl(targetUrl);
+    }
+    injectNotificationOpenToWebView(response);
+  }, [injectNotificationOpenToWebView]);
 
   useEffect(() => {
     let isMounted = true;
@@ -201,10 +276,7 @@ export default function WebViewScreen() {
 
     const responseSub = Notifications.addNotificationResponseReceivedListener(
       (response) => {
-        const targetUrl = getNotificationUrl(response);
-        if (targetUrl) {
-          useWebViewStore.getState().setUrl(targetUrl);
-        }
+        handleNotificationResponse(response, { allowStale: true });
       },
     );
 
@@ -213,10 +285,7 @@ export default function WebViewScreen() {
         const lastResponse =
           await Notifications.getLastNotificationResponseAsync();
         if (!isMounted) return;
-        const targetUrl = getNotificationUrl(lastResponse);
-        if (targetUrl) {
-          useWebViewStore.getState().setUrl(targetUrl);
-        }
+        handleNotificationResponse(lastResponse, { allowStale: false });
       } catch {
         // ignore
       }
@@ -226,7 +295,7 @@ export default function WebViewScreen() {
       isMounted = false;
       responseSub.remove();
     };
-  }, []);
+  }, [handleNotificationResponse, injectPushTokenToWebView]);
 
   const INJECTED_JS = `
     (function() {
@@ -376,13 +445,32 @@ export default function WebViewScreen() {
 
         window.__gpsSuccess = null;
         window.__gpsError = null;
-        navigator.geolocation.getCurrentPosition = function(success, error) {
+        window.__gpsWatchId = 0;
+        function makeGpsError(code, message) {
+          return { code: code, message: message };
+        }
+        navigator.geolocation.getCurrentPosition = function(success, error, options) {
           window.__gpsSuccess = success;
           window.__gpsError = error;
           if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'request_gps' }));
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'request_gps',
+              options: {
+                enableHighAccuracy: !!(options && options.enableHighAccuracy),
+                timeout: options && typeof options.timeout === 'number' ? options.timeout : null,
+                maximumAge: options && typeof options.maximumAge === 'number' ? options.maximumAge : null
+              }
+            }));
+          } else if (typeof error === 'function') {
+            error(makeGpsError(2, 'React Native WebView bridge unavailable'));
           }
         };
+        navigator.geolocation.watchPosition = function(success, error, options) {
+          window.__gpsWatchId += 1;
+          navigator.geolocation.getCurrentPosition(success, error, options);
+          return window.__gpsWatchId;
+        };
+        navigator.geolocation.clearWatch = function() {};
 
         if (window.ReactNativeWebView) {
           window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -887,6 +975,11 @@ export default function WebViewScreen() {
           if (tk) {
             injectPushTokenToWebView(tk);
           }
+          const pendingNotificationOpen = pendingNotificationOpenRef.current;
+          if (pendingNotificationOpen) {
+            injectNotificationOpenToWebView(pendingNotificationOpen);
+            pendingNotificationOpenRef.current = null;
+          }
         }}
         onError={(e) => {
           setLoading(false);
@@ -1032,18 +1125,55 @@ export default function WebViewScreen() {
 
           if (msg.type === "request_gps") {
             try {
-              const { status } =
-                await Location.requestForegroundPermissionsAsync();
+              let permission = await Location.getForegroundPermissionsAsync();
+              if (permission.status !== "granted" && !locationPermissionAskedRef.current) {
+                locationPermissionAskedRef.current = true;
+                permission = await Location.requestForegroundPermissionsAsync();
+              }
+              const status = permission.status;
               if (status !== "granted") {
                 console.log("❌ GPS permission denied");
+                const js = `
+                  if (window.__gpsError) {
+                    window.__gpsError({ code: 1, message: 'Location permission denied' });
+                  }
+                  true;
+                `;
+                webviewRef?.current?.injectJavaScript(js);
                 return;
               }
 
+              const requestOptions =
+                msg && typeof msg === "object"
+                  ? (msg as { options?: Record<string, unknown> }).options
+                  : null;
+              const maximumAge =
+                typeof requestOptions?.maximumAge === "number"
+                  ? requestOptions.maximumAge
+                  : 30000;
+              const timeout =
+                typeof requestOptions?.timeout === "number" &&
+                requestOptions.timeout > 0
+                  ? requestOptions.timeout
+                  : 15000;
+              const enableHighAccuracy =
+                requestOptions?.enableHighAccuracy === true;
+
               let pos = lastPositionRef.current;
-              if (!pos) {
-                pos = await Location.getCurrentPositionAsync({
-                  accuracy: Location.Accuracy.Balanced,
+              const now = Date.now();
+              const cachedAge = pos ? now - pos.timestamp : Number.POSITIVE_INFINITY;
+              if (!pos || cachedAge > maximumAge) {
+                const locationRequest = Location.getCurrentPositionAsync({
+                  accuracy: enableHighAccuracy
+                    ? Location.Accuracy.High
+                    : Location.Accuracy.Balanced,
                 });
+                const timeoutRequest = new Promise<never>((_, reject) => {
+                  setTimeout(() => {
+                    reject(new Error("Location request timed out"));
+                  }, timeout);
+                });
+                pos = await Promise.race([locationRequest, timeoutRequest]);
                 lastPositionRef.current = pos;
               }
 
@@ -1053,16 +1183,32 @@ export default function WebViewScreen() {
                     coords: {
                       latitude: ${pos.coords.latitude},
                       longitude: ${pos.coords.longitude},
-                      accuracy: ${pos.coords.accuracy}
-                    }
+                      accuracy: ${pos.coords.accuracy ?? null},
+                      altitude: ${pos.coords.altitude ?? null},
+                      altitudeAccuracy: ${pos.coords.altitudeAccuracy ?? null},
+                      heading: ${pos.coords.heading ?? null},
+                      speed: ${pos.coords.speed ?? null}
+                    },
+                    timestamp: ${pos.timestamp}
                   });
                 }
                 true;
               `;
 
               webviewRef?.current?.injectJavaScript(js);
-            } catch {
+            } catch (error) {
               console.log("❌ GPS error");
+              const err = error as { message?: string };
+              const js = `
+                if (window.__gpsError) {
+                  window.__gpsError({
+                    code: 2,
+                    message: ${JSON.stringify(err?.message ?? "Location unavailable")}
+                  });
+                }
+                true;
+              `;
+              webviewRef?.current?.injectJavaScript(js);
             }
           }
         }}

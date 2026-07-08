@@ -5,6 +5,31 @@ import { Platform } from "react-native";
 
 const ALLOWED_URL_PREFIX = "/agent/";
 
+export type PushDeviceMetadata = {
+  platform: typeof Platform.OS;
+  device_name: string | null;
+  device_model: string | null;
+  os_name: string | null;
+  os_version: string | null;
+  app_version: string | null;
+  build_number: string | null;
+  runtime_version: string | null;
+  last_seen_at: string;
+};
+
+export type PushRegistrationPayload = PushDeviceMetadata & {
+  token: string;
+  expo_push_token: string;
+};
+
+export type NotificationOpenPayload = {
+  type: "notification_open";
+  url: string | null;
+  action_identifier: string | null;
+  notification_id: string | null;
+  opened_at: string;
+};
+
 export async function setupAndroidNotificationChannel(): Promise<void> {
   if (Platform.OS !== "android") return;
   try {
@@ -101,6 +126,46 @@ export async function registerForPushNotificationsAsync(): Promise<
   }
 }
 
+function readConstantsString(key: string): string | null {
+  const value = (Constants as unknown as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+export function getPushDeviceMetadata(): PushDeviceMetadata {
+  return {
+    platform: Platform.OS,
+    device_name: Device.deviceName ?? null,
+    device_model: Device.modelName ?? Device.modelId ?? null,
+    os_name: Device.osName ?? Platform.OS,
+    os_version: Device.osVersion ?? null,
+    app_version:
+      readConstantsString("nativeAppVersion") ??
+      Constants.expoConfig?.version ??
+      null,
+    build_number:
+      readConstantsString("nativeBuildVersion") ??
+      Constants.expoConfig?.ios?.buildNumber ??
+      Constants.expoConfig?.android?.versionCode?.toString() ??
+      null,
+    runtime_version:
+      readConstantsString("expoRuntimeVersion") ??
+      (typeof Constants.expoConfig?.runtimeVersion === "string"
+        ? Constants.expoConfig.runtimeVersion
+        : null),
+    last_seen_at: new Date().toISOString(),
+  };
+}
+
+export function buildPushRegistrationPayload(
+  token: string,
+): PushRegistrationPayload {
+  return {
+    token,
+    expo_push_token: token,
+    ...getPushDeviceMetadata(),
+  };
+}
+
 export function getNotificationUrl(
   response: Notifications.NotificationResponse | null | undefined,
 ): string | null {
@@ -116,4 +181,34 @@ export function getNotificationUrl(
   } catch {
     return null;
   }
+}
+
+export function getNotificationResponseId(
+  response: Notifications.NotificationResponse | null | undefined,
+): string | null {
+  const identifier = response?.notification?.request?.identifier;
+  return typeof identifier === "string" && identifier.length > 0
+    ? identifier
+    : null;
+}
+
+export function isRecentNotificationResponse(
+  response: Notifications.NotificationResponse | null | undefined,
+  maxAgeMs = 5 * 60 * 1000,
+): boolean {
+  const date = response?.notification?.date;
+  if (typeof date !== "number") return false;
+  return Date.now() - date <= maxAgeMs;
+}
+
+export function buildNotificationOpenPayload(
+  response: Notifications.NotificationResponse | null | undefined,
+): NotificationOpenPayload {
+  return {
+    type: "notification_open",
+    url: getNotificationUrl(response),
+    action_identifier: response?.actionIdentifier ?? null,
+    notification_id: getNotificationResponseId(response),
+    opened_at: new Date().toISOString(),
+  };
 }
