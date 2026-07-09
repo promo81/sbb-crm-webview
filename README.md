@@ -1,50 +1,112 @@
-# Welcome to your Expo app 👋
+# SBB CRM App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Mobile app repository: `promo81/sbb-crm-webview`
 
-## Get started
+SBB CRM App is the Expo / React Native WebView wrapper for SalesPortal CRM.
 
-1. Install dependencies
+- App name: `SBB CRM App`
+- Package / bundle identifier: `it.sbbeauty.crm.mobile`
+- Expo project slug: `sbb-crm-webview`
+- Main app URL: `https://app.salesportal.it/agent/dashboard?native=1`
 
-   ```bash
-   npm install
-   ```
+## Purpose
 
-2. Start the app
+This app wraps SalesPortal CRM in a native mobile WebView and adds native capabilities around the web CRM experience.
 
-   ```bash
-   npx expo start
-   ```
+Native capabilities currently include:
 
-In the output, you'll find options to open the app in a
+- Native CRM shell for the SalesPortal agent interface.
+- GPS/geolocation bridge for check-in and mappa workflows.
+- Push notification registration.
+- Enriched device metadata registration.
+- Google Maps external link handling.
+- Notification open/deep-link bridge back into the CRM WebView.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Current Production Status
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+`main` currently includes the GPS/push metadata work.
 
-## Get a fresh project
+- Merged main commit: `fa487c9` (`Merge branch 'fix/gps-push-monitoring-20260708'`)
+- Mobile feature commit: `06c6aec` (`fix: improve GPS bridge and push device metadata`)
+- Artifact ignore commit: `ee3238d` (`chore: ignore local Android build artifacts`)
+- Android internal testing: active
+- Android version: `1.0.0 (6)`
+- Google Play internal testing link: `https://play.google.com/apps/internaltest/4701440472449918461`
+- Android AAB: uploaded to Google Play Console Internal testing
+- iOS Apple Business / production build: pending
 
-When you're ready, run:
+## Build Profiles
 
-```bash
-npm run reset-project
+Build profiles are defined in `eas.json`.
+
+- `preview`: internal Android APK build.
+- `production`: Android App Bundle (`.aab`) for Google Play Store.
+- `production` auto-increments `versionCode` through EAS remote app versioning.
+
+Do not run EAS builds unless the task explicitly requires a mobile build.
+
+## Artifact Policy
+
+Do not commit APK/AAB build artifacts.
+
+Local Android artifacts are ignored by `.gitignore`:
+
+```gitignore
+*.apk
+*.aab
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Example local artifacts that must remain uncommitted:
 
-## Learn more
+- `SBB_CRM_App_1.0.0_6.aab`
+- `sbb-crm-preview.apk`
 
-To learn more about developing your project with Expo, look at the following resources:
+## Operational Status
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Android Pixel metadata has been verified.
 
-## Join the community
+- Test executed by Francesco using the Roberta Ricci profile.
+- Verified device: Pixel 9a / Android 16 / app `1.0.0`.
+- Metadata bridge confirmed in SalesPortal `user_push_tokens`.
+- OnePlus8Pro appeared as `Demo Test` / `test@test.com` because the device was logged in with that account.
+- Do not make manual DB corrections for the OnePlus8Pro account association.
+- To associate the OnePlus8Pro to Mattia, logout and login again with Mattia's real account.
 
-Join our community of developers creating universal apps.
+## Pending Tasks
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- Mattia Android real-login test.
+- Clienti/Mappa/GPS/notifiche validation.
+- Deborah Mariotti and Valeria Puccini still missing device app.
+- iOS production / Apple Business build pending.
+- GPS functional confirmation on client device pending.
+
+## Useful Commands
+
+Run local validation:
+
+```bash
+npm run lint
+npx tsc --noEmit
+```
+
+Build commands, only when explicitly requested:
+
+```bash
+eas build --platform android --profile preview
+eas build --platform android --profile production
+```
+
+Git inspection:
+
+```bash
+git status --short --branch
+git log --oneline -5
+```
+
+## North Ops Reference
+
+North Ops memory checkpoint:
+
+- `project_slug`: `salesportal`
+- `operational_memory id`: `6daec609-0f5c-4c72-b807-eb7f0568c7ee`
+- `title`: `SBB CRM Android internal testing and Live Monitor Prod checkpoint`
